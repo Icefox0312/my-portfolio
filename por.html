@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Icefox's Lair | True Glass Node</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        /* Base Setup */
+        html, body {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background-color: #020305;
+            color: #ffffff; font-family: 'Space Grotesk', sans-serif;
+            overflow-x: hidden; letter-spacing: -0.015em;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* WebGL Background locked behind everything */
+        #webgl-canvas {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            z-index: 1; pointer-events: none;
+        }
+
+        /* --- THE BULLETPROOF GLASSMORPHISM --- */
+        .glass3d { 
+            /* Added CSS variables to track drag distances dynamically */
+            --dx: 0px;
+            --dy: 0px;
+            
+            position: relative; 
+            z-index: 4; 
+            border-radius: 16px;
+            
+            background: rgba(15, 20, 30, 0.25) !important;
+            backdrop-filter: blur(16px) saturate(120%);
+            -webkit-backdrop-filter: blur(16px) saturate(120%);
+            
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-top: 1px solid rgba(255, 255, 255, 0.3);
+            border-left: 1px solid rgba(255, 255, 255, 0.2);
+            
+            box-shadow: 
+                0 25px 50px rgba(0, 0, 0, 0.8),
+                inset 0 0 20px rgba(255, 255, 255, 0.02);
+                
+            transform-style: preserve-3d;
+            backface-visibility: hidden;
+            
+            /* Add grab cursor */
+            cursor: grab;
+            transition: box-shadow 0.2s ease;
+        }
+        
+        /* When dragging, increase the shadow to make it pop off the screen */
+        .glass3d.dragging {
+            cursor: grabbing;
+            box-shadow: 
+                0 40px 80px rgba(0, 0, 0, 0.9),
+                inset 0 0 20px rgba(255, 255, 255, 0.05);
+            z-index: 10 !important; /* Forces dragged card to the very front */
+        }
+
+        .svg-connections {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        
+        /* Fade out connection lines when a card is grabbed */
+        body.is-dragging .svg-connections { opacity: 0.2; }
+
+        .glow-line { fill: none; stroke: rgba(100, 200, 255, 0.4); stroke-width: 1.5; filter: drop-shadow(0 0 5px rgba(100, 200, 255, 0.8)); }
+        .glow-node { fill: #ffffff; filter: drop-shadow(0 0 6px #64c8ff); }
+
+        /* --- 3D LAYOUT & FLOATING PHYSICS --- */
+        .ui-wrapper {
+            position: relative; z-index: 3; width: 100%; min-height: 100vh;
+            display: flex; justify-content: center; align-items: center;
+        }
+        .node-layout { position: relative; width: 1200px; height: 800px; perspective: 1500px; }
+
+        /* UPDATED KEYFRAMES: Layering the --dx and --dy variables into the animation loop */
+        @keyframes float-center {
+            0%, 100% { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) translateY(0); }
+            50% { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) translateY(-12px); }
+        }
+        @keyframes float-left {
+            0%, 100% { transform: translate(var(--dx), var(--dy)) rotateY(15deg) rotateX(5deg) translateZ(-50px) translateY(0); }
+            50% { transform: translate(var(--dx), var(--dy)) rotateY(15deg) rotateX(5deg) translateZ(-50px) translateY(-10px); }
+        }
+        @keyframes float-right {
+            0%, 100% { transform: translate(var(--dx), var(--dy)) rotateY(-15deg) rotateX(5deg) translateZ(-50px) translateY(0); }
+            50% { transform: translate(var(--dx), var(--dy)) rotateY(-15deg) rotateX(5deg) translateZ(-50px) translateY(-15px); }
+        }
+        @keyframes float-bottom {
+            0%, 100% { transform: translate(calc(-50% + var(--dx)), var(--dy)) translateY(0); }
+            50% { transform: translate(calc(-50% + var(--dx)), var(--dy)) translateY(-8px); }
+        }
+
+        .card-center { position: absolute; top: 50%; left: 50%; width: 480px; padding: 35px; animation: float-center 6s ease-in-out infinite; }
+        .card-left { position: absolute; top: 20%; left: 5%; width: 340px; padding: 25px; animation: float-left 5s ease-in-out infinite 1s; }
+        .card-right { position: absolute; top: 20%; right: 5%; width: 360px; padding: 25px; animation: float-right 7s ease-in-out infinite 0.5s; }
+        .card-bottom { position: absolute; bottom: 5%; left: 50%; width: 400px; padding: 25px; animation: float-bottom 5.5s ease-in-out infinite 2s; }
+
+        /* --- INTERNAL COMPONENT STYLING --- */
+        .system-badge {
+            background-color: rgba(20, 80, 50, 0.6); border: 1px solid #3fb950;
+            color: #4ade80; font-size: 0.75rem; padding: 5px 14px; border-radius: 20px; display: inline-block;
+        }
+        .code-snippet {
+            background: rgba(0, 0, 0, 0.4); border-radius: 8px; padding: 15px;
+            font-size: 0.8rem; color: #8b949e; border: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        /* Ensure interactive elements don't trigger the drag */
+        button, a, input, .icon-box { cursor: pointer; position: relative; z-index: 10; }
+        
+        .icon-box {
+            background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px; width: 65px; height: 65px;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            font-size: 0.75rem; color: #a0a0a0; transition: all 0.2s;
+        }
+        .icon-box:hover { background: rgba(255,255,255,0.15); color: #fff; transform: translateY(-2px); }
+        .icon-box i { font-size: 1.5rem; margin-bottom: 4px; color: #fff; }
+        
+        .timeline-item { position: relative; padding-left: 20px; margin-bottom: 15px; }
+        .timeline-item::before {
+            content: ""; position: absolute; left: 0; top: 6px;
+            width: 6px; height: 6px; border-radius: 50%; border: 1px solid #fff; background: transparent;
+        }
+        .timeline-year { font-size: 0.75rem; color: #8b949e; font-family: 'JetBrains Mono', monospace; width: 45px; display: inline-block;}
+        .timeline-title { font-size: 0.95rem; font-weight: 600; color: #fff; }
+        .timeline-sub { font-size: 0.8rem; color: #8b949e; }
+
+        .contact-btn {
+            background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px; padding: 12px 15px; display: flex; align-items: center; gap: 12px;
+            color: #fff; text-decoration: none; font-size: 0.85rem; transition: background 0.2s;
+        }
+        .contact-btn:hover { background: rgba(255,255,255,0.1); }
+        .contact-btn i { font-size: 1.3rem; }
+        .contact-input {
+            background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px; width: 100%; padding: 12px 15px; color: #fff; font-size: 0.85rem; outline: none;
+        }
+
+        /* Mobile Adjustments */
+        @media (max-width: 1024px) {
+            .node-layout { width: 100%; height: auto; display: flex; flex-direction: column; align-items: center; gap: 30px; padding: 40px 20px; perspective: none; }
+            .svg-connections { display: none; }
+            
+            @keyframes mobile-float {
+                0%, 100% { transform: translate(var(--dx), var(--dy)) translateY(0); }
+                50% { transform: translate(var(--dx), var(--dy)) translateY(-10px); }
+            }
+            .card-center, .card-left, .card-right, .card-bottom {
+                position: relative; top: auto; left: auto; right: auto; bottom: auto; width: 100%; max-width: 450px; animation: mobile-float 6s ease-in-out infinite;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="webgl-canvas"></canvas>
+
+    <div class="ui-wrapper">
+        <div class="node-layout">
+
+            <svg class="svg-connections" viewBox="0 0 1200 800">
+                <path class="glow-line" d="M600,400 Q400,250 350,300" />
+                <circle class="glow-node" cx="350" cy="300" r="4" />
+                <path class="glow-line" d="M600,400 Q800,250 850,300" />
+                <circle class="glow-node" cx="850" cy="300" r="4" />
+                <path class="glow-line" d="M600,400 Q700,550 600,650" />
+                <circle class="glow-node" cx="600" cy="650" r="4" />
+            </svg>
+
+            <div class="glass3d card-left">
+                <h6 class="mono text-white mb-4" style="letter-spacing: 2px; font-size: 0.8rem;">PROJECTS</h6>
+                <div class="code-snippet mb-4">
+                    <div style="color: #ff7b72;">&lt;template&gt;</div>
+                    <div style="padding-left: 10px; color: #79c0ff;">&lt;div class="sandbox"&gt;</div>
+                    <div style="padding-left: 20px;">init_repo();</div>
+                    <div style="padding-left: 10px; color: #79c0ff;">&lt;/div&gt;</div>
+                    <div style="color: #ff7b72;">&lt;/template&gt;</div>
+                </div>
+                <div class="d-flex justify-content-between gap-2">
+                    <div class="icon-box"><i class="bi bi-globe"></i>web</div>
+                    <div class="icon-box"><i class="bi bi-controller"></i>games</div>
+                    <div class="icon-box"><i class="bi bi-braces-asterisk"></i>labs</div>
+                </div>
+            </div>
+
+            <div class="glass3d card-right">
+                <h6 class="mono text-white mb-4" style="letter-spacing: 2px; font-size: 0.8rem;">EXPERIENCE</h6>
+                <div class="timeline-item d-flex">
+                    <span class="timeline-year">2026</span>
+                    <div>
+                        <div class="timeline-title">OSINT & Network Routing</div>
+                        <div class="timeline-sub">Termux, Custom UNIX Configs</div>
+                    </div>
+                </div>
+                <div class="timeline-item d-flex">
+                    <span class="timeline-year">2025</span>
+                    <div>
+                        <div class="timeline-title">Engine Mechanics</div>
+                        <div class="timeline-sub">Roblox Studio Sandbox, Python</div>
+                    </div>
+                </div>
+                <div class="timeline-item d-flex">
+                    <span class="timeline-year">2024</span>
+                    <div>
+                        <div class="timeline-title">Frontend Architecture</div>
+                        <div class="timeline-sub">Web Hub Deployments</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass3d card-center">
+                <h1 class="fw-bold mb-1" style="font-size: 2.5rem;">Muhammad Yusuf</h1>
+                <p class="mono text-white-50 small mb-4" style="font-size: 0.8rem;">// Interactive 3D Node Environment Running</p>
+                <p class="text-white-50 mb-4" style="line-height: 1.7; font-size: 1rem;">
+                    Frontend architect & 3D enthusiast.<br>
+                    Optimizing local environments and sandbox mechanics. Explore below.
+                </p>
+                <span class="system-badge mono fw-bold">SYSTEM ONLINE</span>
+            </div>
+
+            <div class="glass3d card-bottom">
+    <h6 class="mono text-white mb-4" style="letter-spacing: 2px; font-size: 0.8rem;">CONTACT</h6>
+    <div class="row g-3 mb-4">
+        <div class="col-6">
+            <a href="#" class="contact-btn" onclick="copyEmail(event)">
+                <i class="bi bi-envelope"></i>
+                <div>
+                    <div style="font-weight: 600;">Email</div>
+                    <div id="email-status" style="font-size: 0.7rem; color: #8b949e;">Copy address</div>
+                </div>
+            </a>
+        </div>
+        <div class="col-6">
+            <a href="https://github.com/Icefox0312" target="_blank" class="contact-btn">
+                <i class="bi bi-github"></i>
+                <div>
+                    <div style="font-weight: 600;">GitHub</div>
+                    <div style="font-size: 0.7rem; color: #8b949e;">Icefox0312</div>
+                </div>
+            </a>
+        </div>
+    </div>
+    <input type="text" class="contact-input" placeholder="Live input...">
+</div>
+
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const cards = document.querySelectorAll('.glass3d');
+            let activeCard = null;
+            let startX = 0, startY = 0;
+            let initialDx = 0, initialDy = 0;
+
+            cards.forEach(card => {
+                // Initialize custom dataset variables to track state
+                card.dataset.dx = 0;
+                card.dataset.dy = 0;
+
+                card.addEventListener('mousedown', (e) => {
+                    // Ignore clicks if the user is interacting with inner buttons/inputs
+                    if (e.target.closest('button, a, input, .icon-box')) return;
+
+                    activeCard = card;
+                    
+                    // Add styling classes
+                    activeCard.classList.add('dragging');
+                    document.body.classList.add('is-dragging');
+
+                    // Read current offset so it doesn't snap back to 0 on second grab
+                    initialDx = parseFloat(activeCard.dataset.dx) || 0;
+                    initialDy = parseFloat(activeCard.dataset.dy) || 0;
+
+                    // Calculate where the mouse grabbed the card
+                    startX = e.clientX - initialDx;
+                    startY = e.clientY - initialDy;
+                    
+                    // Pause the floating animation so it doesn't fight the mouse pointer
+                    activeCard.style.animationPlayState = 'paused';
+                });
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!activeCard) return;
+                
+                // Prevent highlighting text while dragging
+                e.preventDefault(); 
+
+                // Calculate the new drag distance
+                const newDx = e.clientX - startX;
+                const newDy = e.clientY - startY;
+
+                // Save to dataset for next time
+                activeCard.dataset.dx = newDx;
+                activeCard.dataset.dy = newDy;
+
+                // Pipe values directly into the CSS Transform variables
+                activeCard.style.setProperty('--dx', `${newDx}px`);
+                activeCard.style.setProperty('--dy', `${newDy}px`);
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (activeCard) {
+                    // Reset styling and re-enable the floating animations
+                    activeCard.classList.remove('dragging');
+                    document.body.classList.remove('is-dragging');
+                    activeCard.style.animationPlayState = 'running';
+                    activeCard = null;
+                }
+            });
+        });
+    </script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let scene, camera, renderer, particleSystem;
+        const particleCount = 2000;
+        let mouseX = 0, mouseY = 0, targetX = 0, targetY = 0;
+        const windowHalfX = window.innerWidth / 2, windowHalfY = window.innerHeight / 2;
+
+        function createGlowTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const context = canvas.getContext('2d');
+            const gradient = context.createRadialGradient(32, 32, 0, 32, 32, 32);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+            gradient.addColorStop(0.2, 'rgba(255,255,255,0.8)');
+            gradient.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');
+            context.fillStyle = gradient;
+            context.fillRect(0, 0, 64, 64);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function init3D() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 10000);
+            camera.position.z = 1000;
+
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(particleCount * 3);
+            const colors = new Float32Array(particleCount * 3);
+
+            const colorPalette = [
+                new THREE.Color(0xffffff), 
+                new THREE.Color(0x3399ff), 
+                new THREE.Color(0xff3366), 
+            ];
+
+            for (let i = 0; i < particleCount * 3; i += 3) {
+                const r = 800 * Math.cbrt(Math.random());
+                const theta = Math.random() * 2 * Math.PI;
+                const phi = Math.acos(2 * Math.random() - 1);
+                
+                positions[i] = r * Math.sin(phi) * Math.cos(theta) * 2;   
+                positions[i + 1] = r * Math.sin(phi) * Math.sin(theta); 
+                positions[i + 2] = r * Math.cos(phi) * 1.5;
+
+                const mixedColor = colorPalette[Math.floor(Math.random() * colorPalette.length)];
+                colors[i] = mixedColor.r; colors[i+1] = mixedColor.g; colors[i+2] = mixedColor.b;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const material = new THREE.PointsMaterial({
+                size: 60, 
+                map: createGlowTexture(),
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.4,
+                blending: THREE.AdditiveBlending, 
+                depthWrite: false
+            });
+
+            particleSystem = new THREE.Points(geometry, material);
+            scene.add(particleSystem);
+
+            renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('webgl-canvas'), antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+            document.addEventListener('mousemove', e => { mouseX = (e.clientX - windowHalfX)*0.2; mouseY = (e.clientY - windowHalfY)*0.2; });
+            window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            targetX += (mouseX - targetX) * 0.05; targetY += (mouseY - targetY) * 0.05;
+            
+            particleSystem.rotation.x = targetY * 0.001; 
+            particleSystem.rotation.y = targetX * 0.001; 
+            particleSystem.rotation.z += 0.001; 
+            
+            renderer.render(scene, camera);
+        }
+
+        init3D(); animate();
+    </script>
+    <script>
+    function copyEmail(event) {
+        // Stops the page from jumping to the top when clicking the link
+        event.preventDefault(); 
+        
+        // Put your actual email address here
+        const myEmail = "muhammadyusuf.as@gmail.com"; 
+        
+        navigator.clipboard.writeText(myEmail).then(() => {
+            const statusText = document.getElementById('email-status');
+            
+            // Visual feedback
+            statusText.innerText = "Copied!";
+            statusText.style.color = "#4ade80"; // Lights up green
+            
+            // Resets back to normal after 2 seconds
+            setTimeout(() => {
+                statusText.innerText = "Copy address";
+                statusText.style.color = "#8b949e";
+            }, 2000);
+        }).catch(err => {
+            console.error("Failed to copy text: ", err);
+        });
+    }
+</script>
+</body>
+</html>
